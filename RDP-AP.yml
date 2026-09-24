@@ -1,0 +1,85 @@
+name: RDP Hardened
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      # ============================================
+      # 1. DOWNLOAD NGROK
+      # ============================================
+      - name: Download ngrok
+        run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+
+      - name: Extract ngrok
+        run: Expand-Archive ngrok.zip -Force
+
+      - name: Auth ngrok
+        run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
+        env:
+          NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+
+      # ============================================
+      # 2. ENABLE RDP
+      # ============================================
+      - name: Enable RDP
+        shell: cmd
+        run: |
+          reg add "HKLM\System\CurrentControlSet\Control\Terminal Server" /v fDenyTSConnections /t REG_DWORD /d 0 /f
+          reg add "HKLM\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v UserAuthentication /t REG_DWORD /d 1 /f
+          netsh advfirewall firewall set rule group="remote desktop" new enable=Yes
+          echo RDP enabled
+
+      # ============================================
+      # 3. CHANGE RDP PORT
+      # ============================================
+      - name: Change RDP Port
+        shell: cmd
+        run: |
+          reg add "HKLM\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v PortNumber /t REG_DWORD /d 61249 /f
+          netsh advfirewall firewall add rule name="RDP Custom 61249" dir=in action=allow protocol=TCP localport=61249
+          echo RDP port set to 61249
+
+      - name: Verify Port Change
+        shell: cmd
+        run: |
+          reg query "HKLM\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" /v PortNumber
+
+      # ============================================
+      # 4. SET PASSWORD (net user, not Set-LocalUser)
+      # ============================================
+      - name: Set Password
+        shell: cmd
+        run: |
+          net user runneradmin "Forenzyra#2026!Kx9mZ4pL"
+          echo Password changed
+
+      # ============================================
+      # 5. SECURITY HARDENING
+      # ============================================
+      - name: Enable Login Auditing
+        shell: cmd
+        run: |
+          auditpol /set /subcategory:"Logon" /success:enable /failure:enable
+          echo Audit enabled
+
+      - name: Set Lockout Policy
+        shell: cmd
+        run: |
+          net accounts /lockoutthreshold:5 /lockoutduration:30 /lockoutwindow:30
+          echo Lockout policy set
+
+      # ============================================
+      # 6. NO RESTART NEEDED — PORT APPLIES ON NEXT CONNECTION
+      # ============================================
+
+      # ============================================
+      # 7. START NGROK ON NEW PORT
+      # ============================================
+      - name: Create Tunnel
+        shell: cmd
+        run: .\ngrok\ngrok.exe tcp 61249
